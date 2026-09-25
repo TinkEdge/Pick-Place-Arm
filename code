@@ -1,0 +1,243 @@
+#include <Servo.h>
+
+// Servo objects
+Servo servoBase;
+Servo servoSideShoulder;
+Servo servoElbow;
+Servo servoWrist;
+
+// Servo pins
+const int SERVO_BASE_PIN = 2;
+const int SERVO_SHOULDER_PIN = 3;
+const int SERVO_ELBOW_PIN = 5;
+const int SERVO_WRIST_PIN = 6;
+
+// Joystick pins
+const int JOY1_VRX_PIN = A0;  // Controls Base
+const int JOY1_VRY_PIN = A1;  // Controls Shoulder
+const int JOY2_VRX_PIN = A2;  // Controls Gripper (LEFT/RIGHT for open/close)
+const int JOY2_VRY_PIN = A3;  // Controls Elbow (UP/DOWN - returns to center)
+
+// Original (neutral) positions
+const int ORIGIN_BASE = 90;
+const int ORIGIN_SHOULDER = 90;
+const int ORIGIN_ELBOW = 90;
+
+// Gripper positions
+const int GRIPPER_OPEN = 0;
+const int GRIPPER_CLOSED = 90;
+
+// Current positions
+int currentBasePos = ORIGIN_BASE;
+int currentShoulderPos = ORIGIN_SHOULDER;
+int currentElbowPos = ORIGIN_ELBOW;
+int currentGripperPos = GRIPPER_OPEN;
+
+// Joystick dead zone
+const int DEAD_ZONE = 80;
+
+// Movement speed control
+const int MOVE_STEP_DELAY = 20;
+const int RETURN_STEP_DELAY = 15;
+const float SENSITIVITY = 0.08;
+
+// Gripper control variables
+bool isGripperMoving = false;
+bool lastGripperTriggered = false;
+unsigned long lastGripperTime = 0;
+const int GRIPPER_DEBOUNCE_MS = 300;
+
+void setup() {
+  Serial.begin(9600);
+  
+  servoBase.attach(SERVO_BASE_PIN);
+  servoSideShoulder.attach(SERVO_SHOULDER_PIN);
+  servoElbow.attach(SERVO_ELBOW_PIN);
+  servoWrist.attach(SERVO_WRIST_PIN);
+  
+  moveToOriginalPositions();
+  
+  Serial.println("=================================");
+  Serial.println("ROBOT ARM CONTROLS:");
+  Serial.println("Joy1 LEFT/RIGHT -> Base");
+  Serial.println("Joy1 UP/DOWN    -> Shoulder");
+  Serial.println("Joy2 UP/DOWN    -> Elbow");
+  Serial.println("Joy2 LEFT/RIGHT -> GRIPPER");
+  Serial.println("  LEFT  = OPEN");
+  Serial.println("  RIGHT = CLOSE");
+  Serial.println("=================================");
+}
+
+void loop() {
+  // Read joystick values
+  int joy1X = analogRead(JOY1_VRX_PIN);
+  int joy1Y = analogRead(JOY1_VRY_PIN);
+  int joy2X = analogRead(JOY2_VRX_PIN);
+  int joy2Y = analogRead(JOY2_VRY_PIN);
+  
+  // Center values (512 is center)
+  int baseInput = joy1X - 512;
+  int shoulderInput = joy1Y - 512;
+  int elbowInput = joy2Y - 512;      // Elbow on Y-axis
+  int gripperInput = joy2X - 512;    // Gripper on X-axis
+  
+  // === CONTROL BASE ===
+  if (abs(baseInput) > DEAD_ZONE) {
+    int targetPos = currentBasePos + (baseInput * SENSITIVITY);
+    targetPos = constrain(targetPos, 0, 180);
+    if (targetPos != currentBasePos) {
+      moveServoSmooth(servoBase, currentBasePos, targetPos, MOVE_STEP_DELAY);
+      currentBasePos = targetPos;
+    }
+  } 
+  else {
+    if (currentBasePos != ORIGIN_BASE) {
+      moveServoSmooth(servoBase, currentBasePos, ORIGIN_BASE, RETURN_STEP_DELAY);
+      currentBasePos = ORIGIN_BASE;
+    }
+  }
+  
+  // === CONTROL SHOULDER ===
+  if (abs(shoulderInput) > DEAD_ZONE) {
+    int targetPos = currentShoulderPos + (shoulderInput * SENSITIVITY);
+    targetPos = constrain(targetPos, 0, 180);
+    if (targetPos != currentShoulderPos) {
+      moveServoSmooth(servoSideShoulder, currentShoulderPos, targetPos, MOVE_STEP_DELAY);
+      currentShoulderPos = targetPos;
+    }
+  } 
+  else {
+    if (currentShoulderPos != ORIGIN_SHOULDER) {
+      moveServoSmooth(servoSideShoulder, currentShoulderPos, ORIGIN_SHOULDER, RETURN_STEP_DELAY);
+      currentShoulderPos = ORIGIN_SHOULDER;
+    }
+  }
+  
+  // === CONTROL ELBOW (on Joy2 Y-axis - returns to center) ===
+  if (abs(elbowInput) > DEAD_ZONE) {
+    int targetPos = currentElbowPos + (elbowInput * SENSITIVITY);
+    targetPos = constrain(targetPos, 0, 180);
+    if (targetPos != currentElbowPos) {
+      moveServoSmooth(servoElbow, currentElbowPos, targetPos, MOVE_STEP_DELAY);
+      currentElbowPos = targetPos;
+    }
+  } 
+  else {
+    if (currentElbowPos != ORIGIN_ELBOW) {
+      moveServoSmooth(servoElbow, currentElbowPos, ORIGIN_ELBOW, RETURN_STEP_DELAY);
+      currentElbowPos = ORIGIN_ELBOW;
+    }
+  }
+  
+  // === CONTROL GRIPPER (on Joy2 X-axis - LEFT/RIGHT toggles) ===
+  // LEFT = negative value, RIGHT = positive value
+  bool openCommand = (gripperInput < -DEAD_ZONE);   // Push LEFT to OPEN
+  bool closeCommand = (gripperInput > DEAD_ZONE);   // Push RIGHT to CLOSE
+  unsigned long currentTime = millis();
+  
+  // Handle OPEN (LEFT)
+  if (openCommand && !lastGripperTriggered && !isGripperMoving && 
+      (currentTime - lastGripperTime) > GRIPPER_DEBOUNCE_MS) {
+    
+    if (currentGripperPos != GRIPPER_OPEN) {
+      isGripperMoving = true;
+      moveServoSmooth(servoWrist, currentGripperPos, GRIPPER_OPEN, MOVE_STEP_DELAY);
+      currentGripperPos = GRIPPER_OPEN;
+      isGripperMoving = false;
+      lastGripperTime = currentTime;
+      Serial.println(">>> GRIPPER OPEN <<<");
+    }
+    lastGripperTriggered = true;
+  }
+  // Handle CLOSE (RIGHT)
+  else if (closeCommand && !lastGripperTriggered && !isGripperMoving && 
+           (currentTime - lastGripperTime) > GRIPPER_DEBOUNCE_MS) {
+    
+    if (currentGripperPos != GRIPPER_CLOSED) {
+      isGripperMoving = true;
+      moveServoSmooth(servoWrist, currentGripperPos, GRIPPER_CLOSED, MOVE_STEP_DELAY);
+      currentGripperPos = GRIPPER_CLOSED;
+      isGripperMoving = false;
+      lastGripperTime = currentTime;
+      Serial.println(">>> GRIPPER CLOSED <<<");
+    }
+    lastGripperTriggered = true;
+  }
+  else if (!openCommand && !closeCommand) {
+    lastGripperTriggered = false;
+  }
+  
+  delay(10);
+}
+
+// Smooth servo movement function
+void moveServoSmooth(Servo &servo, int startPos, int endPos, int stepDelay) {
+  if (startPos == endPos) return;
+  
+  int step = (endPos > startPos) ? 1 : -1;
+  
+  for (int pos = startPos; pos != endPos; pos += step) {
+    servo.write(pos);
+    delay(stepDelay);
+  }
+  
+  servo.write(endPos);
+  delay(stepDelay);
+}
+
+// Initialize all servos to original positions
+void moveToOriginalPositions() {
+  Serial.println("Moving to original positions...");
+  
+  // Base
+  if (currentBasePos <= ORIGIN_BASE) {
+    for (int pos = currentBasePos; pos <= ORIGIN_BASE; pos++) {
+      servoBase.write(pos);
+      delay(10);
+    }
+  } else {
+    for (int pos = currentBasePos; pos >= ORIGIN_BASE; pos--) {
+      servoBase.write(pos);
+      delay(10);
+    }
+  }
+  currentBasePos = ORIGIN_BASE;
+  delay(500);
+  
+  // Shoulder
+  if (currentShoulderPos <= ORIGIN_SHOULDER) {
+    for (int pos = currentShoulderPos; pos <= ORIGIN_SHOULDER; pos++) {
+      servoSideShoulder.write(pos);
+      delay(10);
+    }
+  } else {
+    for (int pos = currentShoulderPos; pos >= ORIGIN_SHOULDER; pos--) {
+      servoSideShoulder.write(pos);
+      delay(10);
+    }
+  }
+  currentShoulderPos = ORIGIN_SHOULDER;
+  delay(500);
+  
+  // Elbow
+  if (currentElbowPos <= ORIGIN_ELBOW) {
+    for (int pos = currentElbowPos; pos <= ORIGIN_ELBOW; pos++) {
+      servoElbow.write(pos);
+      delay(10);
+    }
+  } else {
+    for (int pos = currentElbowPos; pos >= ORIGIN_ELBOW; pos--) {
+      servoElbow.write(pos);
+      delay(10);
+    }
+  }
+  currentElbowPos = ORIGIN_ELBOW;
+  delay(500);
+  
+  // Gripper - start OPEN
+  servoWrist.write(GRIPPER_OPEN);
+  currentGripperPos = GRIPPER_OPEN;
+  delay(500);
+  
+  Serial.println("All servos at original positions!");
+}
