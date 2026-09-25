@@ -143,15 +143,18 @@ This helps provide smoother robotic-arm movement.
 
 After startup, the Arduino displays:
 
-text
+
 =================================
-ROBOT ARM CONTROLS:
-Joy1 LEFT/RIGHT -> Base
-Joy1 UP/DOWN    -> Shoulder
-Joy2 UP/DOWN    -> Elbow
-Joy2 LEFT/RIGHT -> GRIPPER
-  LEFT  = OPEN
-  RIGHT = CLOSE
+### 🎮 Robot Arm Controls
+
+| Joystick       | Direction    | Function        |
+| -------------- | ------------ | --------------- |
+| **Joystick 1** | Left / Right | Base            |
+| **Joystick 1** | Up / Down    | Shoulder        |
+| **Joystick 2** | Up / Down    | Elbow           |
+| **Joystick 2** | Left         | Gripper – Open  |
+| **Joystick 2** | Right        | Gripper – Close |
+
 =================================
 
 When the gripper is operated:
